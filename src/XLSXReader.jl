@@ -78,6 +78,8 @@ end
 function format_cellnumber(value)
     if contains(value, ".")
         return parse(Float64, value)
+    elseif contains(value, "E")
+        return parse(Float64, value)
     else
         return parse(Int64, value)
     end
