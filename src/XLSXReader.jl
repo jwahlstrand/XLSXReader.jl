@@ -1,6 +1,7 @@
 __precompile__()
 module XLSXReader
-using ZipFile, LightXML, DataArrays, DataFrames
+using ZipFile, LightXML, DataFrames
+using Dates
 
 struct WorkSheet
     name::String
@@ -10,16 +11,21 @@ end
 #Used as return value for cells with unsupported type
 struct UnsupportedCell end
 
-export readxlsx
+export readxlsx, excel2datetime
+
+"""Convert from Excel date time formats to Julia DateTime"""
+function excel2datetime(x::Float64)
+    return DateTime(Dates.unix2datetime((x - 25569) * 86400))
+end
 
 #sheets = filter(x-> contains(x, "xl/worksheets/"), fnames)
 function get_sharedstrings(file::String)
   xlfile = ZipFile.Reader(file)
   fnames = [x.name for x in xlfile.files]
-  sidx = find(fnames .== "xl/sharedStrings.xml")
+  sidx = findall(fnames .== "xl/sharedStrings.xml")
   shared = []
   if !isempty(sidx)
-      doc = readstring(xlfile.files[sidx[1]])
+      doc = read(xlfile.files[sidx[1]], String)
       xdoc = parse_string(doc)
       xroot = root(xdoc)  # an instance of XMLElement
       shared = []
@@ -43,8 +49,8 @@ end
 function xlsx_parsexml(xslxfile::String, xmlfile::String)
   xlfile = ZipFile.Reader(xslxfile);
   fnames = [x.name for x in xlfile.files]
-  wb_idx = find(fnames .== xmlfile)
-  xml = readstring(xlfile.files[wb_idx[1]])
+  wb_idx = findall(fnames .== xmlfile)
+  xml = read(xlfile.files[wb_idx[1]], String)
   close(xlfile)
   return parse_string(xml)
 end
@@ -76,7 +82,7 @@ end
 
 
 function format_cellnumber(value)
-    if contains(value, ".")
+    if occursin(".", value)
         return parse(Float64, value)
     elseif contains(value, "E")
         return parse(Float64, value)
@@ -98,6 +104,8 @@ function formatcell(c, styles)
     # 14-22 are date formats
     if fmt ≥ 14 && fmt ≤ 22 #Date
         return DateTime(Dates.unix2datetime((nvalue - 25569) * 86400))
+    elseif fmt == 165 #Date format Finnish
+        return DateTime(Dates.unix2datetime((nvalue - 25569) * 86400))
     else
         return nvalue
     end
@@ -111,7 +119,7 @@ function readrow(row, shared_strings, styles)
   # Iterate cols from a row
   for c in collect(child_elements(row))
     cr = attribute(c, "r") #Column and row
-    col = replace(cr, r"[0-9]", "") #Just column
+    col = replace(cr, r"[0-9]" => "") #Just column
     value = UnsupportedCell()
     if mincol == 0
         mincol = colnum(col)
@@ -192,7 +200,8 @@ end
 function ws2array(cells, mincol::Int, maxcol::Int, skip::Int = 0)
     n = length(cells)
     ncols = 1 + maxcol - mincol
-    wsarray = DataArray(Any, n - skip, ncols)
+    wsarray = Array{Any}(undef, n - skip, ncols)
+    wsarray .= missing
     j = 1
     for i in (skip+1):n
         row = cells[i]
@@ -206,9 +215,9 @@ end
 
 """Create valid DataFrame column name from header string"""
 function make_colname(name::String)
-    name = replace(name, ".", "")
-    name = replace(name, r"\s", "")
-    if ismatch(r"^[1-9]", name)
+    name = replace(name, "." => "")
+    name = replace(name, r"\s" => "")
+    if occursin(r"^[1-9]", name)
         name = "x" * name
     end
     return Symbol(name)
